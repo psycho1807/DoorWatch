@@ -303,7 +303,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: TextStyle(color: Colors.red)),
             subtitle: const Text(
                 'Efface toute la configuration et l\'historique',
-                style: TextStyle(color: Colors.red54, fontSize: 12)),
+                style: TextStyle(color: Colors.red, fontSize: 12)),
             onTap: _resetApp,
           ),
           const SizedBox(height: 48),
