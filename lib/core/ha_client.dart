@@ -216,11 +216,11 @@ class HaClient {
             } else if (type == 'auth_ok') {
               if (!completer.isCompleted) completer.complete(true);
               sub.cancel();
-              ch.sink.close();
+              ch?.sink.close();
             } else if (type == 'auth_invalid') {
               if (!completer.isCompleted) completer.complete(false);
               sub.cancel();
-              ch.sink.close();
+              ch?.sink.close();
             }
           } catch (_) {
             if (!completer.isCompleted) completer.complete(false);
