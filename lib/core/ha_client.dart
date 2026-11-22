@@ -170,18 +170,41 @@ class HaClient {
     return null;
   }
 
-  /// Appelle un service HA (`domain.service`).
+  /// Appelle un service HA via WebSocket (pas de CORS).
   Future<bool> callService(String domain, String service,
       {Map<String, dynamic>? data}) async {
     try {
-      final r = await http.post(
-        Uri.parse(Prefs.apiUrl('/services/$domain/$service')),
-        headers: _headers,
-        body: jsonEncode(data ?? {}),
-      );
-      return r.statusCode == 200 || r.statusCode == 201;
+      final result = await sendRequest({
+        'type': 'call_service',
+        'domain': domain,
+        'service': service,
+        'service_data': data ?? {},
+      });
+      return result != null;
     } catch (_) {
       return false;
+    }
+  }
+
+  /// Envoie une requête WebSocket et attend la réponse (type result).
+  Future<Map<String, dynamic>?> sendRequest(Map<String, dynamic> msg) async {
+    if (!_authenticated) {
+      await connect();
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    try {
+      final id = _nextId();
+      final completer = Completer<Map<String, dynamic>?>();
+      _pendingRequests[id] = (data) {
+        completer.complete(data as Map<String, dynamic>?);
+      };
+      _send({...msg, 'id': id});
+      return await completer.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => null,
+      );
+    } catch (_) {
+      return null;
     }
   }
 

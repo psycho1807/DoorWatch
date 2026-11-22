@@ -1,39 +1,46 @@
+import 'dart:convert';
 import 'dart:typed_data';
-import 'package:http/http.dart' as http;
 
+import 'ha_client.dart';
 import 'prefs.dart';
 
-/// Accès au flux caméra via camera_proxy de Home Assistant.
-/// Le proxy HA renvoie un flux MJPEG (multipart/x-mixed-replace).
+/// Accès au flux caméra via Home Assistant.
+/// Sur Flutter web : utilise WebSocket camera/thumbnail (pas de CORS).
+/// Sur mobile/desktop : utilise HTTP camera_proxy.
 class HaCamera {
   HaCamera._();
 
-  static Map<String, String> get _headers => {
-        'Authorization': 'Bearer ${Prefs.haToken}',
-      };
+  // ── Snapshot via WebSocket ───────────────────────────────────────────────
 
-  // ── Snapshot unique ──────────────────────────────────────────────────────
-
-  /// Télécharge une image JPEG instantanée de la caméra.
+  /// Récupère une image JPEG via WebSocket HA (camera/get_image).
+  /// Contourne le blocage CORS de Flutter web.
   static Future<Uint8List?> fetchSnapshot(String entityId) async {
     try {
-      final r = await http.get(
-        Uri.parse(Prefs.cameraProxyUrl(entityId)),
-        headers: _headers,
-      ).timeout(const Duration(seconds: 10));
-      if (r.statusCode == 200) return r.bodyBytes;
-    } catch (_) {}
-    return null;
+      final result = await HaClient.instance.sendRequest({
+        'type': 'camera/get_image',
+        'entity_id': entityId,
+      });
+
+      if (result == null) return null;
+
+      final content = result['content'] as String?;
+      if (content == null || content.isEmpty) return null;
+
+      // Le contenu est en base64
+      return base64Decode(content);
+    } catch (_) {
+      return null;
+    }
   }
 
   // ── URL du flux MJPEG ────────────────────────────────────────────────────
 
-  /// Retourne l'URL MJPEG (stream) pour un widget natif ou WebView.
+  /// URL MJPEG avec token en query param (pour WebView natif).
   static String mjpegUrl(String entityId) =>
       '${Prefs.haUrl.trimRight()}/api/camera_proxy_stream/$entityId'
       '?token=${Prefs.haToken}';
 
-  /// Retourne l'URL snapshot standard.
+  /// URL snapshot standard.
   static String snapshotUrl(String entityId) =>
       Prefs.cameraProxyUrl(entityId);
 }
