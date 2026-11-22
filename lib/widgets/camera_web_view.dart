@@ -111,17 +111,31 @@ class _CameraWebViewState extends State<CameraWebView>
         });
 
         container.append(_imgElement!);
+
+        // La factory s'exécute au moment du build — on charge l'image ici
+        // directement car c'est la garantie que _imgElement est non-null.
+        _loadCount++;
+        final url = _buildUrl();
+        // ignore: avoid_print
+        print('[CameraWebView] factory prête, loading url=$url');
+        _imgElement!.src = url;
+
         return container;
       },
     );
   }
 
   void _loadImage() {
+    if (_imgElement == null) {
+      // ignore: avoid_print
+      print('[CameraWebView] _loadImage: _imgElement est NULL (factory pas encore appelée)');
+      return;
+    }
     _loadCount++;
     final url = _buildUrl();
     // ignore: avoid_print
     print('[CameraWebView] loading url=$url');
-    _imgElement?.src = url;
+    _imgElement!.src = url;
   }
 
   void _startAutoRefresh() {
