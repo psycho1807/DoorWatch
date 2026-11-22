@@ -10,6 +10,7 @@ import '../../core/visit_history.dart';
 import '../../widgets/camera_view.dart';
 import '../../widgets/camera_web_view.dart';
 import '../../widgets/action_button.dart';
+import '../face_recognition/face_recognizer.dart';
 
 /// Écran principal DoorWatch — flux caméra + boutons d'action.
 class DoorbellScreen extends StatefulWidget {
@@ -26,6 +27,7 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
   bool _connected = false;
 
   Uint8List? _snapshot;
+  String? _recognizedName; // Pro : nom identifié lors du dernier appel
 
   @override
   void initState() {
@@ -86,10 +88,14 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
     final newState = (data?['new_state'] as Map<String, dynamic>?)?['state'];
     if (!mounted) return;
     final wasRinging = _ringing;
-    setState(() => _ringing = newState == 'on');
+    final nowRinging = newState == 'on';
+    setState(() {
+      _ringing = nowRinging;
+      if (!nowRinging) _recognizedName = null;
+    });
     if (_ringing && !wasRinging) {
       _loadSnapshot();
-      _recordVisit();
+      _identifyAndRecord();
     }
   }
 
@@ -165,10 +171,27 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
     }
   }
 
-  Future<void> _recordVisit() async {
+  /// Capture un snapshot, tente la reconnaissance (Pro), enregistre la visite.
+  Future<void> _identifyAndRecord() async {
+    String? name;
+
+    if (Prefs.isPro && Prefs.cameraEntity.isNotEmpty) {
+      // Courte attente pour laisser l'image se stabiliser
+      await Future.delayed(const Duration(seconds: 1));
+      final bytes = await HaCamera.fetchSnapshot(Prefs.cameraEntity);
+      if (bytes != null) {
+        name = await FaceRecognizer.identify(bytes);
+        if (mounted && name != null) {
+          setState(() => _recognizedName = name);
+          _showSnack('Visiteur reconnu : $name 👤', Colors.blue);
+        }
+      }
+    }
+
     await VisitHistory.addVisit(Visit(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       timestamp: DateTime.now(),
+      recognizedName: name,
     ));
   }
 
@@ -205,7 +228,7 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            // Badge sonnette
+            // Badge sonnette (+ nom reconnu si Pro)
             if (_ringing)
               Container(
                 padding: const EdgeInsets.symmetric(
@@ -214,17 +237,21 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
                   color: Colors.red,
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: const Row(
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.notifications_active,
+                    const Icon(Icons.notifications_active,
                         size: 14, color: Colors.white),
-                    SizedBox(width: 4),
-                    Text('Sonnette',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 4),
+                    Text(
+                      _recognizedName != null
+                          ? '👤 $_recognizedName'
+                          : 'Sonnette',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold),
+                    ),
                   ],
                 ),
               ),

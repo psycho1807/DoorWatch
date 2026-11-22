@@ -46,12 +46,38 @@ class _EntitiesScreenState extends State<EntitiesScreen> {
       _lights        = lights.map((e) => e['entity_id'] as String).toList();
       _loading = false;
 
-      // Pré-remplir si déjà configuré
-      _doorbell = Prefs.doorbellEntity.isNotEmpty ? Prefs.doorbellEntity : null;
-      _camera   = Prefs.cameraEntity.isNotEmpty   ? Prefs.cameraEntity   : null;
-      _lock     = Prefs.lockEntity.isNotEmpty      ? Prefs.lockEntity     : null;
-      _light    = Prefs.lightEntity.isNotEmpty     ? Prefs.lightEntity    : null;
+      // Pré-remplir si déjà configuré, sinon auto-détecter les entités Ring
+      _doorbell = Prefs.doorbellEntity.isNotEmpty
+          ? Prefs.doorbellEntity
+          : _autoDetect(_binarySensors, [
+              'porte_d_entree_ding', 'doorbell', 'sonnette', 'ding',
+            ]);
+      _camera   = Prefs.cameraEntity.isNotEmpty
+          ? Prefs.cameraEntity
+          : _autoDetect(_cameras, [
+              'porte_d_entree_live_view', 'doorbell', 'entree',
+            ]);
+      _lock     = Prefs.lockEntity.isNotEmpty
+          ? Prefs.lockEntity
+          : _autoDetect(_locks, ['entree', 'porte', 'door']);
+      _light    = Prefs.lightEntity.isNotEmpty
+          ? Prefs.lightEntity
+          : _autoDetect(_lights, [
+              'entree_vehicule_light', 'entree_vehicule_lumiere', 'entree',
+            ]);
     });
+  }
+
+  /// Cherche dans [list] le premier entity_id contenant un des [keywords].
+  String? _autoDetect(List<String> list, List<String> keywords) {
+    for (final kw in keywords) {
+      final match = list.firstWhere(
+        (id) => id.contains(kw),
+        orElse: () => '',
+      );
+      if (match.isNotEmpty) return match;
+    }
+    return null;
   }
 
   void _save() {
