@@ -1,6 +1,6 @@
 # DoorWatch 🔔
 
-**Interphone intelligent pour Home Assistant — Android & iOS**
+**Interphone intelligent pour Home Assistant**
 
 > *Votre porte. Vos données. Aucun cloud.*
 
@@ -24,16 +24,15 @@ et ouverture de la porte — sans abonnement, sans cloud fabricant.
 ## Compatibilité
 
 - Home Assistant 2024.1+
-- Android 8.0+ / iOS 14+
+- Navigateur web (Chrome recommandé)
 - Accès local, Nabu Casa, ou tunnel Cloudflare
 
 ## Installation
 
-1. Installer DoorWatch depuis le [Play Store](#) ou l'[App Store](#)
+1. Cloner le dépôt et lancer `flutter run -d chrome`
 2. Ouvrir l'appli et entrer l'URL de votre HA + un token longue durée
 3. Choisir votre entité sonnette (binary_sensor) et caméra
-4. Installer le [blueprint HA](#) pour les notifications push
-5. C'est tout !
+4. C'est tout !
 
 ## Pro
 

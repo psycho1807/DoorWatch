@@ -142,6 +142,5 @@ doorwatch/
 - [ ] Intégration HA comme signaling
 
 ### v1.0 — Release publique
-- [ ] Publication Play Store + App Store
 - [ ] Page Gumroad Pro
 - [ ] Blueprint HA publié sur HACS

@@ -10,7 +10,7 @@ brew install flutter
 flutter doctor
 ```
 
-Installer aussi Xcode depuis l'App Store (pour iOS).
+Xcode n'est pas nécessaire (pas de build iOS).
 
 ## 2. Créer le projet
 
