@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -7,6 +8,7 @@ import '../../core/ha_camera.dart';
 import '../../core/prefs.dart';
 import '../../core/visit_history.dart';
 import '../../widgets/camera_view.dart';
+import '../../widgets/camera_web_view.dart';
 import '../../widgets/action_button.dart';
 
 /// Écran principal DoorWatch — flux caméra + boutons d'action.
@@ -170,12 +172,18 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
           // ── Flux caméra ──────────────────────────────────────────────────
           Expanded(
             child: Prefs.cameraEntity.isNotEmpty
-                ? CameraView(
-                    entityId: Prefs.cameraEntity,
-                    snapshot: _snapshot,
-                    ringing: _ringing,
-                    onRefresh: _loadSnapshot,
-                  )
+                ? (kIsWeb
+                    ? CameraWebView(
+                        entityId: Prefs.cameraEntity,
+                        ringing: _ringing,
+                        onRefresh: _loadSnapshot,
+                      )
+                    : CameraView(
+                        entityId: Prefs.cameraEntity,
+                        snapshot: _snapshot,
+                        ringing: _ringing,
+                        onRefresh: _loadSnapshot,
+                      ))
                 : const Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
