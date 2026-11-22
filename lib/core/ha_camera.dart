@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:developer' as dev;
 import 'dart:typed_data';
 
 import 'ha_client.dart';
@@ -22,25 +21,29 @@ class HaCamera {
         'entity_id': entityId,
       });
 
-      dev.log('[HaCamera] camera/get_image result keys: ${result?.keys}',
-          name: 'HaCamera');
+      // ignore: avoid_print
+      print('[HaCamera] result keys: ${result?.keys}');
 
       if (result == null) {
-        dev.log('[HaCamera] result is null', name: 'HaCamera');
+        // ignore: avoid_print
+        print('[HaCamera] result is null');
         return null;
       }
 
       // HA retourne {"content": "<base64>", "content_type": "image/jpeg"}
       final content = result['content'] as String?;
       if (content == null || content.isEmpty) {
-        dev.log('[HaCamera] content vide. result=$result', name: 'HaCamera');
+        // ignore: avoid_print
+        print('[HaCamera] content vide. result=$result');
         return null;
       }
 
-      dev.log('[HaCamera] content length=${content.length}', name: 'HaCamera');
+      // ignore: avoid_print
+      print('[HaCamera] OK content length=${content.length}');
       return base64Decode(content);
     } catch (e, st) {
-      dev.log('[HaCamera] erreur: $e\n$st', name: 'HaCamera');
+      // ignore: avoid_print
+      print('[HaCamera] erreur: $e\n$st');
       return null;
     }
   }
