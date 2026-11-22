@@ -84,39 +84,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           // ── Historique ────────────────────────────────────────────────
           _SectionHeader('Historique'),
-          Padding(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 16, vertical: 4),
-            child: Row(
-              children: [
-                const Icon(Icons.history,
-                    size: 22, color: Colors.white54),
-                const SizedBox(width: 16),
-                const Expanded(child: Text('Conserver les visites')),
-                DropdownButton<int>(
-                  value: _keepDays,
-                  dropdownColor: const Color(0xFF1C2128),
-                  underline: const SizedBox(),
-                  style: const TextStyle(fontSize: 14),
-                  items: const [
-                    DropdownMenuItem(
-                        value: 7, child: Text('7 jours')),
-                    DropdownMenuItem(
-                        value: 14, child: Text('14 jours')),
-                    DropdownMenuItem(
-                        value: 30, child: Text('30 jours')),
-                    DropdownMenuItem(
-                        value: 90, child: Text('90 jours')),
-                    DropdownMenuItem(
-                        value: 0, child: Text('Toujours')),
-                  ],
-                  onChanged: (v) {
-                    if (v == null) return;
-                    setState(() => _keepDays = v);
-                    Prefs.keepHistoryDays = v;
-                  },
-                ),
+          ListTile(
+            leading: const Icon(Icons.history,
+                size: 22, color: Colors.white54),
+            title: const Text('Conserver les visites'),
+            trailing: DropdownButton<int>(
+              value: _keepDays,
+              dropdownColor: const Color(0xFF1C2128),
+              underline: const SizedBox(),
+              style: const TextStyle(fontSize: 14, color: Colors.white),
+              items: const [
+                DropdownMenuItem(value: 7,  child: Text('7 jours')),
+                DropdownMenuItem(value: 14, child: Text('14 jours')),
+                DropdownMenuItem(value: 30, child: Text('30 jours')),
+                DropdownMenuItem(value: 90, child: Text('90 jours')),
+                DropdownMenuItem(value: 0,  child: Text('Toujours')),
               ],
+              onChanged: (v) {
+                if (v == null) return;
+                setState(() => _keepDays = v);
+                Prefs.keepHistoryDays = v;
+              },
             ),
           ),
 
