@@ -1,12 +1,12 @@
-// ignore: avoid_web_libraries_in_flutter
 import 'dart:async';
-import 'dart:ui_web' as ui_web;
-import 'dart:html' as html;
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import '../core/prefs.dart';
 
-/// Widget caméra pour Flutter WEB uniquement.
-/// Utilise XMLHttpRequest avec header Authorization pour Ring cameras.
+import '../core/ha_camera.dart';
+
+/// Widget caméra pour Flutter WEB.
+/// Utilise WebSocket (camera/get_image) → contourne le CORS entièrement.
+/// L'image est rafraîchie toutes les 5 secondes.
 class CameraWebView extends StatefulWidget {
   final String entityId;
   final bool ringing;
@@ -25,9 +25,7 @@ class CameraWebView extends StatefulWidget {
 
 class _CameraWebViewState extends State<CameraWebView>
     with TickerProviderStateMixin {
-  late final String _viewId;
-  html.ImageElement? _imgElement;
-  String? _currentBlobUrl;
+  Uint8List? _imageBytes;
   bool _loading = true;
   bool _error = false;
   Timer? _refreshTimer;
@@ -40,7 +38,6 @@ class _CameraWebViewState extends State<CameraWebView>
   @override
   void initState() {
     super.initState();
-    _viewId = 'ha-camera-${widget.entityId.hashCode}';
 
     _pulseController = AnimationController(
       duration: const Duration(milliseconds: 800),
@@ -58,92 +55,43 @@ class _CameraWebViewState extends State<CameraWebView>
       CurvedAnimation(parent: _borderController, curve: Curves.easeInOut),
     );
 
-    _registerHtmlView();
     _loadImage();
     _startAutoRefresh();
   }
 
-  void _registerHtmlView() {
-    ui_web.platformViewRegistry.registerViewFactory(
-      _viewId,
-      (int viewId) {
-        final container = html.DivElement()
-          ..style.width = '100%'
-          ..style.height = '100%'
-          ..style.overflow = 'hidden'
-          ..style.backgroundColor = '#0D1117';
-
-        _imgElement = html.ImageElement()
-          ..style.width = '100%'
-          ..style.height = '100%'
-          ..style.objectFit = 'cover'
-          ..style.display = 'none';
-
-        container.append(_imgElement!);
-        return container;
-      },
-    );
-  }
-
   Future<void> _loadImage() async {
-    final url =
-        '${Prefs.haUrl.trimRight()}/api/camera_proxy/${widget.entityId}';
-    final token = Prefs.haToken;
-
     try {
-      final blobUrl = await _xhrFetch(url, token);
-      if (blobUrl == null) {
-        if (mounted) setState(() { _loading = false; _error = true; });
-        return;
+      final bytes = await HaCamera.fetchSnapshot(widget.entityId);
+      if (!mounted) return;
+      if (bytes != null && bytes.isNotEmpty) {
+        setState(() {
+          _imageBytes = bytes;
+          _loading = false;
+          _error = false;
+        });
+        widget.onRefresh?.call();
+      } else {
+        if (_imageBytes == null) {
+          setState(() {
+            _loading = false;
+            _error = true;
+          });
+        }
       }
-
-      if (_imgElement != null) {
-        _imgElement!.src = blobUrl;
-        _imgElement!.style.display = 'block';
-      }
-
-      // Libère l'ancien blob URL
-      if (_currentBlobUrl != null) {
-        html.Url.revokeObjectUrl(_currentBlobUrl!);
-      }
-      _currentBlobUrl = blobUrl;
-
-      if (mounted) setState(() { _loading = false; _error = false; });
-      widget.onRefresh?.call();
     } catch (_) {
-      if (mounted) setState(() { _loading = false; _error = true; });
+      if (!mounted) return;
+      if (_imageBytes == null) {
+        setState(() {
+          _loading = false;
+          _error = true;
+        });
+      }
     }
   }
 
-  /// Fait une requête XHR avec header Authorization et retourne une blob URL.
-  Future<String?> _xhrFetch(String url, String token) {
-    final completer = Completer<String?>();
-
-    final xhr = html.HttpRequest();
-    xhr.open('GET', url);
-    xhr.setRequestHeader('Authorization', 'Bearer $token');
-    xhr.responseType = 'blob';
-
-    xhr.onLoad.listen((_) {
-      if (xhr.status == 200) {
-        final blob = xhr.response as html.Blob;
-        completer.complete(html.Url.createObjectUrlFromBlob(blob));
-      } else {
-        completer.complete(null);
-      }
-    });
-
-    xhr.onError.listen((_) => completer.complete(null));
-    xhr.send();
-
-    return completer.future.timeout(
-      const Duration(seconds: 15),
-      onTimeout: () => null,
-    );
-  }
-
   void _startAutoRefresh() {
-    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+    _refreshTimer =
+        Timer.periodic(const Duration(seconds: 5), (_) {
       if (mounted) _loadImage();
     });
   }
@@ -153,9 +101,6 @@ class _CameraWebViewState extends State<CameraWebView>
     _pulseController.dispose();
     _borderController.dispose();
     _refreshTimer?.cancel();
-    if (_currentBlobUrl != null) {
-      html.Url.revokeObjectUrl(_currentBlobUrl!);
-    }
     super.dispose();
   }
 
@@ -164,10 +109,15 @@ class _CameraWebViewState extends State<CameraWebView>
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Vue HTML native (l'<img> avec blob URL)
-        HtmlElementView(viewType: _viewId),
+        // ── Image caméra ──────────────────────────────────────────────
+        if (_imageBytes != null)
+          Image.memory(
+            _imageBytes!,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+          ),
 
-        // Loading overlay
+        // ── Loading ───────────────────────────────────────────────────
         if (_loading)
           Container(
             color: const Color(0xFF0D1117),
@@ -187,14 +137,15 @@ class _CameraWebViewState extends State<CameraWebView>
                   ),
                   SizedBox(height: 12),
                   Text('Connexion à la caméra…',
-                      style: TextStyle(color: Colors.white38, fontSize: 13)),
+                      style:
+                          TextStyle(color: Colors.white38, fontSize: 13)),
                 ],
               ),
             ),
           ),
 
-        // Erreur overlay
-        if (_error && !_loading)
+        // ── Erreur ────────────────────────────────────────────────────
+        if (_error && !_loading && _imageBytes == null)
           Container(
             color: const Color(0xFF0D1117),
             child: const Center(
@@ -204,14 +155,14 @@ class _CameraWebViewState extends State<CameraWebView>
                   Icon(Icons.videocam_off, size: 56, color: Colors.red),
                   SizedBox(height: 12),
                   Text('Flux caméra indisponible',
-                      style:
-                          TextStyle(color: Colors.white38, fontSize: 13)),
+                      style: TextStyle(
+                          color: Colors.white38, fontSize: 13)),
                 ],
               ),
             ),
           ),
 
-        // Gradient bas
+        // ── Gradient bas ──────────────────────────────────────────────
         Positioned(
           bottom: 0,
           left: 0,
@@ -224,14 +175,14 @@ class _CameraWebViewState extends State<CameraWebView>
                 end: Alignment.bottomCenter,
                 colors: [
                   Colors.transparent,
-                  Colors.black.withOpacity(0.7)
+                  Colors.black.withOpacity(0.7),
                 ],
               ),
             ),
           ),
         ),
 
-        // Bordure animée quand sonnette
+        // ── Bordure animée (sonnette) ─────────────────────────────────
         if (widget.ringing)
           AnimatedBuilder(
             animation: _borderAnimation,
@@ -239,8 +190,8 @@ class _CameraWebViewState extends State<CameraWebView>
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   border: Border.all(
-                    color:
-                        Colors.red.withOpacity(_borderAnimation.value),
+                    color: Colors.red
+                        .withOpacity(_borderAnimation.value),
                     width: 4,
                   ),
                 ),
@@ -248,7 +199,7 @@ class _CameraWebViewState extends State<CameraWebView>
             ),
           ),
 
-        // Badge sonnette animé
+        // ── Badge sonnette animé ──────────────────────────────────────
         if (widget.ringing)
           Positioned(
             top: 20,
@@ -268,7 +219,7 @@ class _CameraWebViewState extends State<CameraWebView>
                         color: Colors.red.withOpacity(0.6),
                         blurRadius: 25,
                         spreadRadius: 8,
-                      )
+                      ),
                     ],
                   ),
                   child: const Row(
@@ -293,7 +244,7 @@ class _CameraWebViewState extends State<CameraWebView>
             ),
           ),
 
-        // Label AUTO
+        // ── Label AUTO ────────────────────────────────────────────────
         Positioned(
           top: 14,
           right: 14,
@@ -325,7 +276,7 @@ class _CameraWebViewState extends State<CameraWebView>
           ),
         ),
 
-        // Bouton refresh manuel
+        // ── Bouton refresh manuel ─────────────────────────────────────
         Positioned(
           bottom: 14,
           right: 14,
@@ -337,7 +288,8 @@ class _CameraWebViewState extends State<CameraWebView>
               onTap: _loadImage,
               child: const Padding(
                 padding: EdgeInsets.all(8),
-                child: Icon(Icons.refresh, size: 20, color: Colors.white70),
+                child:
+                    Icon(Icons.refresh, size: 20, color: Colors.white70),
               ),
             ),
           ),
