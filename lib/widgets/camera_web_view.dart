@@ -62,8 +62,11 @@ class _CameraWebViewState extends State<CameraWebView>
     );
 
     _registerHtmlView();
-    _loadImage();
-    _startAutoRefresh();
+    // Le factory HTML s'exécute après le premier build — on attend le frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadImage();
+      _startAutoRefresh();
+    });
   }
 
   /// Construit l'URL snapshot avec le token en query param (pas de CORS).
