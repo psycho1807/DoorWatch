@@ -194,17 +194,55 @@ class HaClient {
     }
   }
 
-  /// Vérifie que l'URL et le token sont valides.
+  /// Vérifie que l'URL et le token sont valides via WebSocket.
+  /// (HTTP REST bloqué par CORS sur Flutter web — WebSocket non soumis à CORS)
   static Future<bool> testConnection(String url, String token) async {
+    final completer = Completer<bool>();
+    WebSocketChannel? ch;
+
     try {
-      final r = await http.get(
-        Uri.parse('${url.trimRight()}/api/'),
-        headers: {
-          'Authorization': 'Bearer $token',
+      final raw = url.trimRight();
+      final wsUrl = raw.replaceFirst(RegExp(r'^http'), 'ws') + '/api/websocket';
+      ch = WebSocketChannel.connect(Uri.parse(wsUrl));
+
+      late StreamSubscription sub;
+      sub = ch.stream.listen(
+        (data) {
+          try {
+            final msg = jsonDecode(data as String) as Map<String, dynamic>;
+            final type = msg['type'] as String?;
+            if (type == 'auth_required') {
+              ch!.sink.add(jsonEncode({'type': 'auth', 'access_token': token}));
+            } else if (type == 'auth_ok') {
+              if (!completer.isCompleted) completer.complete(true);
+              sub.cancel();
+              ch.sink.close();
+            } else if (type == 'auth_invalid') {
+              if (!completer.isCompleted) completer.complete(false);
+              sub.cancel();
+              ch.sink.close();
+            }
+          } catch (_) {
+            if (!completer.isCompleted) completer.complete(false);
+          }
         },
-      ).timeout(const Duration(seconds: 10));
-      return r.statusCode == 200;
+        onError: (_) {
+          if (!completer.isCompleted) completer.complete(false);
+        },
+        onDone: () {
+          if (!completer.isCompleted) completer.complete(false);
+        },
+      );
+
+      return await completer.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          ch?.sink.close();
+          return false;
+        },
+      );
     } catch (_) {
+      ch?.sink.close();
       return false;
     }
   }
