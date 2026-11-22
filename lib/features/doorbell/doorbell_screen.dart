@@ -20,9 +20,10 @@ class DoorbellScreen extends StatefulWidget {
 }
 
 class _DoorbellScreenState extends State<DoorbellScreen> {
-  bool _ringing = false;
-  bool _doorOpen = false;
-  bool _lightOn  = false;
+  bool _ringing   = false;
+  bool _doorOpen  = false;
+  bool _lightOn   = false;
+  bool _connected = false;
 
   Uint8List? _snapshot;
 
@@ -35,19 +36,42 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
 
   Future<void> _connectAndListen() async {
     final client = HaClient.instance;
-    await client.connect();
+    final ok = await client.connect();
+    if (mounted) setState(() => _connected = ok);
+    if (!ok) return;
 
-    // Écoute de la sonnette
+    // État initial des entités
+    _syncInitialStates();
+
+    // Abonnements
     if (Prefs.doorbellEntity.isNotEmpty) {
       client.subscribeState(Prefs.doorbellEntity, _onDoorbellState);
     }
-    // Écoute de la serrure
     if (Prefs.lockEntity.isNotEmpty) {
       client.subscribeState(Prefs.lockEntity, _onLockState);
     }
-    // Écoute de la lumière
     if (Prefs.lightEntity.isNotEmpty) {
       client.subscribeState(Prefs.lightEntity, _onLightState);
+    }
+  }
+
+  /// Lit l'état initial des entités au démarrage.
+  Future<void> _syncInitialStates() async {
+    final client = HaClient.instance;
+
+    if (Prefs.lockEntity.isNotEmpty) {
+      final s = await client.getState(Prefs.lockEntity);
+      final state = s?['state'] as String?;
+      if (mounted && state != null) {
+        setState(() => _doorOpen = state == 'unlocked');
+      }
+    }
+    if (Prefs.lightEntity.isNotEmpty) {
+      final s = await client.getState(Prefs.lightEntity);
+      final state = s?['state'] as String?;
+      if (mounted && state != null) {
+        setState(() => _lightOn = state == 'on');
+      }
     }
   }
 
@@ -58,52 +82,87 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
   }
 
   void _onDoorbellState(Map<String, dynamic> event) {
-    final data = event['data'] as Map<String, dynamic>?;
+    final data     = event['data'] as Map<String, dynamic>?;
     final newState = (data?['new_state'] as Map<String, dynamic>?)?['state'];
-    if (mounted) {
-      setState(() => _ringing = newState == 'on');
-      if (_ringing) {
-        _loadSnapshot();
-        _recordVisit();
-      }
+    if (!mounted) return;
+    final wasRinging = _ringing;
+    setState(() => _ringing = newState == 'on');
+    if (_ringing && !wasRinging) {
+      _loadSnapshot();
+      _recordVisit();
     }
   }
 
   void _onLockState(Map<String, dynamic> event) {
-    final data = event['data'] as Map<String, dynamic>?;
+    final data     = event['data'] as Map<String, dynamic>?;
     final newState = (data?['new_state'] as Map<String, dynamic>?)?['state'];
     if (mounted) setState(() => _doorOpen = newState == 'unlocked');
   }
 
   void _onLightState(Map<String, dynamic> event) {
-    final data = event['data'] as Map<String, dynamic>?;
+    final data     = event['data'] as Map<String, dynamic>?;
     final newState = (data?['new_state'] as Map<String, dynamic>?)?['state'];
     if (mounted) setState(() => _lightOn = newState == 'on');
   }
 
   Future<void> _openDoor() async {
     if (Prefs.lockEntity.isEmpty) return;
-    final ok = await HaClient.instance
-        .callService('lock', 'unlock', data: {'entity_id': Prefs.lockEntity});
-    if (ok && mounted) {
-      setState(() => _doorOpen = true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Porte déverrouillée'),
-          backgroundColor: Colors.green,
-          duration: Duration(seconds: 2),
+
+    // Confirmation avant ouverture
+    if (!_doorOpen) {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.lock_open, color: Color(0xFF1E88E5)),
+              SizedBox(width: 10),
+              Text('Ouvrir la porte ?'),
+            ],
+          ),
+          content: const Text('La porte va être déverrouillée.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Annuler'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Ouvrir'),
+            ),
+          ],
         ),
       );
+      if (confirm != true) return;
+    }
+
+    final service = _doorOpen ? 'lock' : 'unlock';
+    final ok = await HaClient.instance.callService(
+      'lock', service,
+      data: {'entity_id': Prefs.lockEntity},
+    );
+
+    if (ok && mounted) {
+      setState(() => _doorOpen = !_doorOpen);
+      _showSnack(
+        _doorOpen ? 'Porte déverrouillée ✓' : 'Porte verrouillée ✓',
+        _doorOpen ? Colors.green : Colors.orange,
+      );
+    } else if (mounted) {
+      _showSnack('Erreur — vérifiez la connexion HA', Colors.red);
     }
   }
 
   Future<void> _toggleLight() async {
     if (Prefs.lightEntity.isEmpty) return;
-    await HaClient.instance.callService(
+    final ok = await HaClient.instance.callService(
       'light',
       _lightOn ? 'turn_off' : 'turn_on',
       data: {'entity_id': Prefs.lightEntity},
     );
+    if (!ok && mounted) {
+      _showSnack('Erreur lumière', Colors.red);
+    }
   }
 
   Future<void> _recordVisit() async {
@@ -111,6 +170,18 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       timestamp: DateTime.now(),
     ));
+  }
+
+  void _showSnack(String msg, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   @override
@@ -123,11 +194,22 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
             const SizedBox(width: 8),
             const Text('DoorWatch'),
             const Spacer(),
-            // Indicateur de sonnerie
+            // Indicateur connexion
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 400),
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _connected ? Colors.green : Colors.red,
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Badge sonnette
             if (_ringing)
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: Colors.red,
                   borderRadius: BorderRadius.circular(20),
@@ -169,7 +251,7 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
       ),
       body: Column(
         children: [
-          // ── Flux caméra ──────────────────────────────────────────────────
+          // ── Flux caméra ──────────────────────────────────────────────
           Expanded(
             child: Prefs.cameraEntity.isNotEmpty
                 ? (kIsWeb
@@ -198,7 +280,7 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
                   ),
           ),
 
-          // ── Boutons d'action ─────────────────────────────────────────────
+          // ── Boutons d'action ─────────────────────────────────────────
           Container(
             color: const Color(0xFF161B22),
             padding: const EdgeInsets.symmetric(
@@ -206,11 +288,15 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                // Ouvrir la porte
+                // Ouvrir / Verrouiller la porte
                 ActionButton(
-                  icon: _doorOpen ? Icons.lock_open : Icons.lock_outlined,
+                  icon: _doorOpen
+                      ? Icons.lock_open
+                      : Icons.lock_outlined,
                   label: _doorOpen ? 'Ouverte' : 'Ouvrir',
-                  color: _doorOpen ? Colors.green : const Color(0xFF1E88E5),
+                  color: _doorOpen
+                      ? Colors.green
+                      : const Color(0xFF1E88E5),
                   enabled: Prefs.lockEntity.isNotEmpty,
                   onPressed: _openDoor,
                 ),
@@ -236,7 +322,7 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
                   onPressed: _startIntercom,
                 ),
 
-                // Snapshot
+                // Snapshot manuel
                 ActionButton(
                   icon: Icons.camera_alt_outlined,
                   label: 'Photo',
@@ -251,10 +337,8 @@ class _DoorbellScreenState extends State<DoorbellScreen> {
     );
   }
 
-  void _startIntercom() {
+  Future<void> _startIntercom() async {
     // TODO (Pro) : lancer WebRTC intercom
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Intercom WebRTC — bientôt disponible')),
-    );
+    _showSnack('Intercom WebRTC — bientôt disponible', Colors.blue);
   }
 }

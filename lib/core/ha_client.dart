@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
-import 'package:http/http.dart' as http;
 
 import 'prefs.dart';
 
@@ -17,34 +16,71 @@ class HaClient {
   WebSocketChannel? _channel;
   int _msgId = 1;
   bool _authenticated = false;
+  bool _connecting = false;
   bool _reconnecting = false;
 
-  final _eventListeners = <String, List<HaEventCallback>>{};
-  final _stateListeners = <String, List<HaEventCallback>>{};
+  final _eventListeners  = <String, List<HaEventCallback>>{};
+  final _stateListeners  = <String, List<HaEventCallback>>{};
   final _pendingRequests = <int, void Function(dynamic)>{};
+
+  // Completer résolu quand auth_ok est reçu
+  Completer<bool>? _authCompleter;
 
   // ── Connexion ────────────────────────────────────────────────────────────
 
-  /// Ouvre la connexion WebSocket et s'authentifie.
-  Future<void> connect() async {
-    if (_channel != null) return;
+  /// Ouvre la connexion WebSocket et attend auth_ok.
+  Future<bool> connect() async {
+    if (_authenticated) return true;
+    if (_connecting) {
+      // Attendre que la connexion en cours se termine
+      return await (_authCompleter?.future ?? Future.value(false));
+    }
 
-    final raw = Prefs.haUrl.trimRight();
-    final uri = Uri.parse(raw.replaceFirst(RegExp(r'^http'), 'ws') + '/api/websocket');
+    _connecting = true;
+    _authCompleter = Completer<bool>();
 
-    _channel = WebSocketChannel.connect(uri);
-    _channel!.stream.listen(
-      _onMessage,
-      onError: (e) => _scheduleReconnect(),
-      onDone: _scheduleReconnect,
-    );
+    try {
+      final raw = Prefs.haUrl.trimRight();
+      final uri = Uri.parse(
+          raw.replaceFirst(RegExp(r'^http'), 'ws') + '/api/websocket');
+
+      _channel = WebSocketChannel.connect(uri);
+      _channel!.stream.listen(
+        _onMessage,
+        onError: (e) {
+          if (!(_authCompleter?.isCompleted ?? true)) {
+            _authCompleter?.complete(false);
+          }
+          _scheduleReconnect();
+        },
+        onDone: () {
+          if (!(_authCompleter?.isCompleted ?? true)) {
+            _authCompleter?.complete(false);
+          }
+          _scheduleReconnect();
+        },
+      );
+
+      final ok = await _authCompleter!.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => false,
+      );
+      _connecting = false;
+      return ok;
+    } catch (_) {
+      _connecting = false;
+      _authCompleter?.complete(false);
+      return false;
+    }
   }
 
   void disconnect() {
     _channel?.sink.close(ws_status.goingAway);
     _channel = null;
     _authenticated = false;
+    _connecting = false;
     _msgId = 1;
+    _pendingRequests.clear();
   }
 
   void _scheduleReconnect() {
@@ -52,6 +88,7 @@ class HaClient {
     _reconnecting = true;
     _channel = null;
     _authenticated = false;
+    _connecting = false;
     Future.delayed(const Duration(seconds: 5), () async {
       _reconnecting = false;
       await connect();
@@ -70,10 +107,18 @@ class HaClient {
 
       case 'auth_ok':
         _authenticated = true;
+        _connecting = false;
+        if (!(_authCompleter?.isCompleted ?? true)) {
+          _authCompleter?.complete(true);
+        }
         _resubscribeAll();
 
       case 'auth_invalid':
-        // Token invalide — ne pas reconnecter en boucle
+        _authenticated = false;
+        _connecting = false;
+        if (!(_authCompleter?.isCompleted ?? true)) {
+          _authCompleter?.complete(false);
+        }
         disconnect();
 
       case 'event':
@@ -85,6 +130,9 @@ class HaClient {
           final cb = _pendingRequests.remove(id)!;
           if (msg['success'] == true) {
             cb(msg['result']);
+          } else {
+            // En cas d'erreur HA, on complète quand même avec null
+            cb(null);
           }
         }
     }
@@ -98,19 +146,23 @@ class HaClient {
 
   // ── Événements ───────────────────────────────────────────────────────────
 
-  /// S'abonne à un type d'événement HA (`state_changed`, `call_service`, …).
+  /// S'abonne à un type d'événement HA.
   void subscribeEvent(String eventType, HaEventCallback cb) {
     _eventListeners.putIfAbsent(eventType, () => []).add(cb);
     if (_authenticated) {
-      _send({'id': _nextId(), 'type': 'subscribe_events', 'event_type': eventType});
+      _send({'id': _nextId(), 'type': 'subscribe_events',
+             'event_type': eventType});
     }
   }
 
   /// S'abonne aux changements d'état d'une entité spécifique.
   void subscribeState(String entityId, HaEventCallback cb) {
+    final isFirstSub = _stateListeners.isEmpty;
     _stateListeners.putIfAbsent(entityId, () => []).add(cb);
-    if (_authenticated) {
-      _send({'id': _nextId(), 'type': 'subscribe_events', 'event_type': 'state_changed'});
+    // N'envoyer la subscription qu'une seule fois pour state_changed
+    if (_authenticated && isFirstSub) {
+      _send({'id': _nextId(), 'type': 'subscribe_events',
+             'event_type': 'state_changed'});
     }
   }
 
@@ -120,10 +172,12 @@ class HaClient {
 
   void _resubscribeAll() {
     for (final eventType in _eventListeners.keys) {
-      _send({'id': _nextId(), 'type': 'subscribe_events', 'event_type': eventType});
+      _send({'id': _nextId(), 'type': 'subscribe_events',
+             'event_type': eventType});
     }
     if (_stateListeners.isNotEmpty) {
-      _send({'id': _nextId(), 'type': 'subscribe_events', 'event_type': 'state_changed'});
+      _send({'id': _nextId(), 'type': 'subscribe_events',
+             'event_type': 'state_changed'});
     }
   }
 
@@ -134,12 +188,10 @@ class HaClient {
     final type = event['event_type'] as String?;
     if (type == null) return;
 
-    // Listeners génériques sur le type
     for (final cb in (_eventListeners[type] ?? [])) {
       cb(event);
     }
 
-    // Listeners par entité sur state_changed
     if (type == 'state_changed') {
       final data = event['data'] as Map<String, dynamic>?;
       final entityId = data?['entity_id'] as String?;
@@ -151,26 +203,35 @@ class HaClient {
     }
   }
 
-  // ── API REST ─────────────────────────────────────────────────────────────
+  // ── WebSocket request/response ───────────────────────────────────────────
 
-  Map<String, String> get _headers => {
-        'Authorization': 'Bearer ${Prefs.haToken}',
-        'Content-Type': 'application/json',
-      };
-
-  /// Lit l'état d'une entité.
-  Future<Map<String, dynamic>?> getState(String entityId) async {
+  /// Envoie une requête WS et attend la réponse `result`.
+  Future<Map<String, dynamic>?> sendRequest(
+      Map<String, dynamic> msg) async {
+    if (!_authenticated) {
+      final ok = await connect();
+      if (!ok) return null;
+    }
     try {
-      final r = await http.get(
-        Uri.parse(Prefs.apiUrl('/states/$entityId')),
-        headers: _headers,
+      final id = _nextId();
+      final completer = Completer<Map<String, dynamic>?>();
+      _pendingRequests[id] = (data) {
+        completer.complete(data as Map<String, dynamic>?);
+      };
+      _send({...msg, 'id': id});
+      return await completer.future.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          _pendingRequests.remove(id);
+          return null;
+        },
       );
-      if (r.statusCode == 200) return jsonDecode(r.body) as Map<String, dynamic>;
-    } catch (_) {}
-    return null;
+    } catch (_) {
+      return null;
+    }
   }
 
-  /// Appelle un service HA via WebSocket (pas de CORS).
+  /// Appelle un service HA via WebSocket.
   Future<bool> callService(String domain, String service,
       {Map<String, dynamic>? data}) async {
     try {
@@ -186,43 +247,22 @@ class HaClient {
     }
   }
 
-  /// Envoie une requête WebSocket et attend la réponse (type result).
-  Future<Map<String, dynamic>?> sendRequest(Map<String, dynamic> msg) async {
-    if (!_authenticated) {
-      await connect();
-      await Future.delayed(const Duration(seconds: 2));
-    }
-    try {
-      final id = _nextId();
-      final completer = Completer<Map<String, dynamic>?>();
-      _pendingRequests[id] = (data) {
-        completer.complete(data as Map<String, dynamic>?);
-      };
-      _send({...msg, 'id': id});
-      return await completer.future.timeout(
-        const Duration(seconds: 10),
-        onTimeout: () => null,
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Liste toutes les entités d'un domaine via WebSocket (pas de CORS).
+  /// Liste les entités d'un domaine via WebSocket.
   Future<List<Map<String, dynamic>>> listStates({String? domain}) async {
-    if (!_authenticated) await connect();
-    // Attendre auth si nécessaire
     if (!_authenticated) {
-      await Future.delayed(const Duration(seconds: 2));
+      final ok = await connect();
+      if (!ok) return [];
     }
     try {
       final id = _nextId();
       final completer = Completer<List<Map<String, dynamic>>>();
       _pendingRequests[id] = (data) {
+        if (data == null) { completer.complete([]); return; }
         final result = data as List<dynamic>;
         final states = result
             .cast<Map<String, dynamic>>()
-            .where((e) => domain == null ||
+            .where((e) =>
+                domain == null ||
                 (e['entity_id'] as String).startsWith('$domain.'))
             .toList();
         completer.complete(states);
@@ -230,32 +270,50 @@ class HaClient {
       _send({'id': id, 'type': 'get_states'});
       return await completer.future.timeout(
         const Duration(seconds: 10),
-        onTimeout: () => [],
+        onTimeout: () {
+          _pendingRequests.remove(id);
+          return [];
+        },
       );
     } catch (_) {
       return [];
     }
   }
 
-  /// Vérifie que l'URL et le token sont valides via WebSocket.
-  /// (HTTP REST bloqué par CORS sur Flutter web — WebSocket non soumis à CORS)
+  /// Lit l'état courant d'une entité via WebSocket.
+  Future<Map<String, dynamic>?> getState(String entityId) async {
+    final states = await listStates();
+    try {
+      return states.firstWhere(
+          (e) => e['entity_id'] == entityId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ── Test de connexion (statique) ─────────────────────────────────────────
+
+  /// Vérifie URL + token via WebSocket (pas soumis au CORS).
   static Future<bool> testConnection(String url, String token) async {
     final completer = Completer<bool>();
     WebSocketChannel? ch;
 
     try {
       final raw = url.trimRight();
-      final wsUrl = raw.replaceFirst(RegExp(r'^http'), 'ws') + '/api/websocket';
+      final wsUrl =
+          raw.replaceFirst(RegExp(r'^http'), 'ws') + '/api/websocket';
       ch = WebSocketChannel.connect(Uri.parse(wsUrl));
 
       late StreamSubscription sub;
       sub = ch.stream.listen(
         (data) {
           try {
-            final msg = jsonDecode(data as String) as Map<String, dynamic>;
+            final msg =
+                jsonDecode(data as String) as Map<String, dynamic>;
             final type = msg['type'] as String?;
             if (type == 'auth_required') {
-              ch!.sink.add(jsonEncode({'type': 'auth', 'access_token': token}));
+              ch!.sink.add(
+                  jsonEncode({'type': 'auth', 'access_token': token}));
             } else if (type == 'auth_ok') {
               if (!completer.isCompleted) completer.complete(true);
               sub.cancel();

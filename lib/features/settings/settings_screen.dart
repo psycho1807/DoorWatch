@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/prefs.dart';
+
+const String _gumroadUrl =
+    'https://doorwatch.gumroad.com/l/doorwatch-pro';
+const String _appVersion = '1.0.0';
 
 /// Écran des paramètres DoorWatch.
 class SettingsScreen extends StatefulWidget {
@@ -16,6 +21,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _notifyVibrate;
   late int  _keepDays;
   final _licenseCtrl = TextEditingController();
+  bool _activating = false;
 
   @override
   void initState() {
@@ -32,6 +38,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  // ── UI ────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -40,20 +48,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           // ── Connexion HA ──────────────────────────────────────────────
           _SectionHeader('Connexion Home Assistant'),
-          ListTile(
-            leading: const Icon(Icons.link),
-            title: const Text('URL HA'),
-            subtitle: Text(Prefs.haUrl.isEmpty ? 'Non configuré' : Prefs.haUrl,
-                style: const TextStyle(color: Colors.white54, fontSize: 12)),
-            trailing: const Icon(Icons.chevron_right),
+          _NavTile(
+            icon: Icons.link,
+            title: 'URL & Token',
+            subtitle: Prefs.haUrl.isEmpty ? 'Non configuré' : Prefs.haUrl,
             onTap: () => context.push('/setup'),
           ),
-          ListTile(
-            leading: const Icon(Icons.sensors),
-            title: const Text('Entités HA'),
-            subtitle: const Text('Sonnette, caméra, serrure, lumière',
-                style: TextStyle(color: Colors.white54, fontSize: 12)),
-            trailing: const Icon(Icons.chevron_right),
+          _NavTile(
+            icon: Icons.sensors,
+            title: 'Entités',
+            subtitle: 'Sonnette · Caméra · Serrure · Lumière',
             onTap: () => context.push('/setup/entities'),
           ),
 
@@ -80,77 +84,215 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           // ── Historique ────────────────────────────────────────────────
           _SectionHeader('Historique'),
-          ListTile(
-            leading: const Icon(Icons.history),
-            title: const Text('Conserver les visites'),
-            subtitle: Text(_keepDays == 0 ? 'Indéfiniment' : '$_keepDays jours',
-                style: const TextStyle(color: Colors.white54, fontSize: 12)),
-            trailing: DropdownButton<int>(
-              value: _keepDays,
-              dropdownColor: const Color(0xFF1C2128),
-              underline: const SizedBox(),
-              items: const [
-                DropdownMenuItem(value: 7,  child: Text('7 jours')),
-                DropdownMenuItem(value: 14, child: Text('14 jours')),
-                DropdownMenuItem(value: 30, child: Text('30 jours')),
-                DropdownMenuItem(value: 90, child: Text('90 jours')),
-                DropdownMenuItem(value: 0,  child: Text('Toujours')),
+          Padding(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 4),
+            child: Row(
+              children: [
+                const Icon(Icons.history,
+                    size: 22, color: Colors.white54),
+                const SizedBox(width: 16),
+                const Expanded(child: Text('Conserver les visites')),
+                DropdownButton<int>(
+                  value: _keepDays,
+                  dropdownColor: const Color(0xFF1C2128),
+                  underline: const SizedBox(),
+                  style: const TextStyle(fontSize: 14),
+                  items: const [
+                    DropdownMenuItem(
+                        value: 7, child: Text('7 jours')),
+                    DropdownMenuItem(
+                        value: 14, child: Text('14 jours')),
+                    DropdownMenuItem(
+                        value: 30, child: Text('30 jours')),
+                    DropdownMenuItem(
+                        value: 90, child: Text('90 jours')),
+                    DropdownMenuItem(
+                        value: 0, child: Text('Toujours')),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() => _keepDays = v);
+                    Prefs.keepHistoryDays = v;
+                  },
+                ),
               ],
-              onChanged: (v) {
-                if (v == null) return;
-                setState(() => _keepDays = v);
-                Prefs.keepHistoryDays = v;
-              },
             ),
           ),
 
           // ── Pro ───────────────────────────────────────────────────────
           _SectionHeader('DoorWatch Pro'),
           if (Prefs.isPro)
-            const ListTile(
-              leading: Icon(Icons.verified, color: Colors.green),
-              title: Text('Licence Pro active'),
-              subtitle: Text('Reconnaissance faciale + intercom activés',
+            ListTile(
+              leading: const Icon(Icons.verified, color: Colors.green),
+              title: const Text('Licence Pro active',
+                  style: TextStyle(color: Colors.green,
+                      fontWeight: FontWeight.w600)),
+              subtitle: const Text(
+                  'Reconnaissance faciale + intercom activés',
                   style: TextStyle(color: Colors.white54, fontSize: 12)),
+              trailing: TextButton(
+                onPressed: _revokeLicense,
+                style: TextButton.styleFrom(
+                    foregroundColor: Colors.red),
+                child: const Text('Révoquer'),
+              ),
             )
           else ...[
+            // Description des fonctionnalités Pro
             Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+              child: Card(
+                color: const Color(0xFF1C2128),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Fonctionnalités Pro',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14)),
+                      const SizedBox(height: 10),
+                      _ProFeature(
+                          icon: Icons.face,
+                          text: 'Reconnaissance faciale (MobileFaceNet)'),
+                      _ProFeature(
+                          icon: Icons.mic,
+                          text: 'Intercom WebRTC bidirectionnel'),
+                      _ProFeature(
+                          icon: Icons.notifications_active,
+                          text: 'Notifications push Firebase'),
+                      _ProFeature(
+                          icon: Icons.timeline,
+                          text: 'Historique illimité + export CSV'),
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          icon: const Icon(Icons.shopping_cart_outlined),
+                          label: const Text('Acheter DoorWatch Pro — 6,99 €'),
+                          onPressed: _openGumroad,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            // Saisie licence
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: Row(
                 children: [
                   Expanded(
                     child: TextField(
                       controller: _licenseCtrl,
                       decoration: const InputDecoration(
-                        labelText: 'Clé de licence Pro',
+                        labelText: 'Clé de licence',
                         hintText: 'DW-XXXX-XXXX-XXXX',
                         prefixIcon: Icon(Icons.vpn_key_outlined),
                       ),
+                      onSubmitted: (_) => _activateLicense(),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 10),
                   FilledButton(
-                    onPressed: _activateLicense,
-                    child: const Text('Activer'),
+                    onPressed: _activating ? null : _activateLicense,
+                    child: _activating
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2))
+                        : const Text('Activer'),
                   ),
                 ],
               ),
             ),
+          ],
+
+          // ── CORS info (uniquement si caméra configurée) ───────────────
+          if (Prefs.cameraEntity.isNotEmpty) ...[
+            _SectionHeader('Caméra web'),
             Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 4),
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.shopping_cart_outlined),
-                label: const Text('Acheter DoorWatch Pro — 6,99 €'),
-                onPressed: () {
-                  // TODO : lancer l'URL Gumroad
-                },
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Card(
+                color: const Color(0xFF1C2128),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.info_outline,
+                              color: Color(0xFF1E88E5), size: 18),
+                          SizedBox(width: 8),
+                          Text('Flux caméra sur navigateur',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13)),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Pour afficher le flux Ring dans le navigateur, '
+                        'ajoutez dans /config/configuration.yaml :',
+                        style: TextStyle(
+                            color: Colors.white54, fontSize: 12),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0D1117),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          'http:\n'
+                          '  cors_allowed_origins:\n'
+                          '    - http://localhost',
+                          style: TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                              color: Colors.green),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Puis redémarrez Home Assistant.',
+                        style: TextStyle(
+                            color: Colors.white38, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
           ],
 
-          const SizedBox(height: 16),
+          // ── À propos ──────────────────────────────────────────────────
+          _SectionHeader('À propos'),
+          ListTile(
+            leading: const Icon(Icons.doorbell_outlined,
+                color: Color(0xFF1E88E5)),
+            title: const Text('DoorWatch'),
+            subtitle: Text('Version $_appVersion',
+                style: const TextStyle(
+                    color: Colors.white38, fontSize: 12)),
+          ),
+          ListTile(
+            leading: const Icon(Icons.open_in_new_outlined),
+            title: const Text('Site officiel'),
+            subtitle: const Text('doorwatch.gumroad.com',
+                style: TextStyle(
+                    color: Colors.white38, fontSize: 12)),
+            onTap: _openGumroad,
+          ),
+
+          const SizedBox(height: 8),
 
           // ── Réinitialisation ──────────────────────────────────────────
           _SectionHeader('Général'),
@@ -159,25 +301,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 color: Colors.red),
             title: const Text('Réinitialiser DoorWatch',
                 style: TextStyle(color: Colors.red)),
+            subtitle: const Text(
+                'Efface toute la configuration et l\'historique',
+                style: TextStyle(color: Colors.red54, fontSize: 12)),
             onTap: _resetApp,
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 48),
         ],
       ),
     );
   }
 
+  // ── Actions ───────────────────────────────────────────────────────────
+
+  Future<void> _openGumroad() async {
+    final uri = Uri.parse(_gumroadUrl);
+    if (await canLaunchUrl(uri)) await launchUrl(uri);
+  }
+
   Future<void> _activateLicense() async {
     final key = _licenseCtrl.text.trim();
     if (key.isEmpty) return;
-    // TODO : vérifier la clé via Gumroad API
+
+    setState(() => _activating = true);
+    await Future.delayed(const Duration(milliseconds: 600)); // UX
+
+    // TODO : vérifier la clé via Gumroad Ping API
     // Pour l'instant, accepter toute clé commençant par "DW-"
-    if (key.startsWith('DW-') && key.length >= 14) {
+    final valid = key.startsWith('DW-') && key.length >= 14;
+
+    setState(() => _activating = false);
+
+    if (valid) {
       Prefs.proLicense = key;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Licence Pro activée ! 🎉'),
           backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
         ));
         setState(() {});
       }
@@ -186,8 +347,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Clé de licence invalide'),
           backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
         ));
       }
+    }
+  }
+
+  Future<void> _revokeLicense() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Révoquer la licence ?'),
+        content: const Text(
+            'Les fonctionnalités Pro seront désactivées.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Annuler')),
+          FilledButton(
+              style: FilledButton.styleFrom(
+                  backgroundColor: Colors.red),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Révoquer')),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      Prefs.proLicense = '';
+      if (mounted) setState(() {});
     }
   }
 
@@ -216,6 +403,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
+// ── Widgets auxiliaires ──────────────────────────────────────────────────
+
 class _SectionHeader extends StatelessWidget {
   final String text;
   const _SectionHeader(this.text);
@@ -231,6 +420,56 @@ class _SectionHeader extends StatelessWidget {
             fontWeight: FontWeight.bold,
             letterSpacing: 1.2,
           ),
+        ),
+      );
+}
+
+class _NavTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _NavTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+        leading: Icon(icon),
+        title: Text(title),
+        subtitle: Text(subtitle,
+            style:
+                const TextStyle(color: Colors.white54, fontSize: 12)),
+        trailing: const Icon(Icons.chevron_right, color: Colors.white24),
+        onTap: onTap,
+      );
+}
+
+class _ProFeature extends StatelessWidget {
+  final IconData icon;
+  final String text;
+
+  const _ProFeature({required this.icon, required this.text});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          children: [
+            Icon(icon,
+                size: 16,
+                color: const Color(0xFF1E88E5).withOpacity(0.8)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(text,
+                  style: const TextStyle(
+                      color: Colors.white70, fontSize: 13)),
+            ),
+          ],
         ),
       );
 }

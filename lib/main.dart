@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/date_symbol_data_local.dart';
 // import 'package:firebase_core/firebase_core.dart';
 // import 'package:firebase_messaging/firebase_messaging.dart';
 
@@ -26,6 +27,7 @@ Future<void> main() async {
   // FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
   await Prefs.init();
+  await initializeDateFormatting('fr_FR', null);
 
   // await NotificationService.init();
 
