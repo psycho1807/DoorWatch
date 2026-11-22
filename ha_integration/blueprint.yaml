@@ -1,0 +1,95 @@
+blueprint:
+  name: "DoorWatch — Notification sonnette"
+  description: >
+    Envoie une notification push vers l'app DoorWatch (Android/iOS) quand
+    la sonnette est activée. Prend une capture de la caméra et l'inclut
+    dans la notification.
+  domain: automation
+  input:
+    doorbell_entity:
+      name: Entité sonnette
+      description: >
+        Le binary_sensor qui passe à "on" quand quelqu'un appuie sur la sonnette.
+      selector:
+        entity:
+          domain: binary_sensor
+
+    camera_entity:
+      name: Entité caméra
+      description: >
+        La caméra à capturer lors d'un appel. Laisser vide si pas de caméra.
+      default: ""
+      selector:
+        entity:
+          domain: camera
+
+    notify_device:
+      name: Appareil à notifier
+      description: >
+        L'appareil mobile sur lequel envoyer la notification DoorWatch.
+      selector:
+        device:
+          integration: mobile_app
+
+    cooldown_seconds:
+      name: Délai anti-spam (secondes)
+      description: >
+        Durée minimale entre deux notifications consécutives.
+      default: 30
+      selector:
+        number:
+          min: 5
+          max: 300
+          step: 5
+          unit_of_measurement: secondes
+
+variables:
+  camera: !input camera_entity
+
+trigger:
+  - platform: state
+    entity_id: !input doorbell_entity
+    to: "on"
+
+condition:
+  - condition: template
+    value_template: >
+      {{ (now() - this.attributes.last_triggered | default(now() - timedelta(hours=1), true)).total_seconds() > !input cooldown_seconds }}
+
+action:
+  # Capturer une image si une caméra est configurée
+  - if:
+      - condition: template
+        value_template: "{{ camera != '' }}"
+    then:
+      - service: camera.snapshot
+        target:
+          entity_id: !input camera_entity
+        data:
+          filename: /tmp/doorwatch_snapshot.jpg
+
+  # Notification push vers DoorWatch
+  - device_id: !input notify_device
+    domain: mobile_app
+    type: notify
+    title: "🔔 Sonnette"
+    message: "Quelqu'un est à la porte"
+    data:
+      tag: doorwatch_doorbell
+      channel: doorbell
+      importance: high
+      ttl: 0
+      priority: high
+      entity_id: !input doorbell_entity
+      image: >
+        {% if camera != '' %}
+          /api/camera_proxy/{{ camera }}
+        {% endif %}
+      actions:
+        - action: OPEN_DOOR
+          title: "🔓 Ouvrir"
+        - action: VIEW_CAMERA
+          title: "📷 Voir"
+
+mode: single
+max_exceeded: silent

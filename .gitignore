@@ -1,0 +1,47 @@
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+build/
+pubspec.lock
+
+# Android
+android/app/keystore.jks
+android/local.properties
+android/.gradle/
+android/captures/
+android/app/build/
+android/app/.cxx/
+*.jks
+*.keystore
+
+# iOS
+ios/.symlinks/
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/App.framework
+ios/Flutter/Flutter.framework
+ios/Flutter/flutter_assets/
+ios/Pods/
+ios/Runner.xcworkspace/xcshareddata/
+ios/Runner.xcodeproj/project.xcworkspace/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Firebase (ne pas committer les configs sensibles)
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+
+# Env
+.env
+.env.local
