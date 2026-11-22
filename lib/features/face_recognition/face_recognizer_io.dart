@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'face_recognizer.dart';
 
 /// Stub mobile/desktop — reconnaissance faciale non disponible sans face-api.js.

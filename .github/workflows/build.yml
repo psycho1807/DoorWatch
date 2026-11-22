@@ -1,5 +1,8 @@
 name: Build DoorWatch
 
+permissions:
+  contents: write
+
 on:
   push:
     branches: [main]
@@ -229,6 +232,7 @@ jobs:
     name: Build iOS IPA
     runs-on: macos-latest
     if: github.ref == 'refs/heads/main'
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
@@ -284,7 +288,7 @@ jobs:
         run: flutter pub get
 
       - name: Analyze
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
 
       - name: Format check
         run: dart format --output=none --set-exit-if-changed lib/

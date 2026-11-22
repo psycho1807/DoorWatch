@@ -1,6 +1,5 @@
 /// Implémentation web — face-api.js via dart:js_util
 import 'dart:convert';
-import 'dart:typed_data';
 
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:js_util' as js_util;

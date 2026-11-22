@@ -33,7 +33,6 @@ class _CameraWebViewState extends State<CameraWebView>
   html.ImageElement? _imgElement;
   bool _loading = true;
   bool _error = false;
-  int _loadCount = 0;
   Timer? _refreshTimer;
 
   late AnimationController _pulseController;
@@ -147,7 +146,6 @@ class _CameraWebViewState extends State<CameraWebView>
       if (mounted) setState(() { _loading = false; _error = true; });
       return;
     }
-    _loadCount++;
     _imgElement!.src = _buildUrl(token);
   }
 
