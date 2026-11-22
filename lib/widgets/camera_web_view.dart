@@ -4,6 +4,7 @@ import 'dart:ui_web' as ui_web;
 import 'dart:html' as html;
 import 'package:flutter/material.dart';
 
+import '../core/ha_client.dart';
 import '../core/prefs.dart';
 
 /// Widget caméra pour Flutter WEB.
@@ -69,13 +70,39 @@ class _CameraWebViewState extends State<CameraWebView>
     });
   }
 
-  /// Construit l'URL snapshot avec le token en query param (pas de CORS).
-  String _buildUrl() {
+  /// Récupère le token caméra signé depuis les attributs de l'entité HA.
+  /// C'est l'`access_token` court (≠ long-lived token) nécessaire pour camera_proxy.
+  Future<String?> _fetchCameraToken() async {
+    try {
+      final result = await HaClient.instance.sendRequest({
+        'type': 'get_states',
+      });
+      // get_states retourne une liste, pas un map — on cherche notre entité
+      final raw = result?['_raw'];
+      if (raw is List) {
+        for (final item in raw) {
+          if (item is Map && item['entity_id'] == widget.entityId) {
+            final attrs = item['attributes'];
+            if (attrs is Map) {
+              return attrs['access_token'] as String?;
+            }
+          }
+        }
+      }
+      return null;
+    } catch (e) {
+      // ignore: avoid_print
+      print('[CameraWebView] _fetchCameraToken erreur: $e');
+      return null;
+    }
+  }
+
+  /// Construit l'URL snapshot avec le token caméra signé en query param.
+  String _buildUrl(String cameraToken) {
     final base = Prefs.haUrl.trimRight();
-    final token = Prefs.haToken;
     final ts = DateTime.now().millisecondsSinceEpoch;
     return '$base/api/camera_proxy/${widget.entityId}'
-        '?token=$token&_ts=$ts';
+        '?token=$cameraToken&_ts=$ts';
   }
 
   void _registerHtmlView() {
@@ -105,42 +132,40 @@ class _CameraWebViewState extends State<CameraWebView>
         _imgElement!.onError.listen((_) {
           // ignore: avoid_print
           print('[CameraWebView] img onError, url=${_imgElement?.src}');
-          if (mounted && _loadCount <= 1) {
+          if (mounted) {
             setState(() { _loading = false; _error = true; });
           }
         });
 
         container.append(_imgElement!);
-
-        // La factory s'exécute au moment du build — on charge l'image ici
-        // directement car c'est la garantie que _imgElement est non-null.
-        _loadCount++;
-        final url = _buildUrl();
-        // ignore: avoid_print
-        print('[CameraWebView] factory prête, loading url=$url');
-        _imgElement!.src = url;
-
+        // Le chargement se fait via _loadImage() après fetchToken async
         return container;
       },
     );
   }
 
-  void _loadImage() {
+  Future<void> _loadImage() async {
     if (_imgElement == null) {
       // ignore: avoid_print
-      print('[CameraWebView] _loadImage: _imgElement est NULL (factory pas encore appelée)');
+      print('[CameraWebView] _loadImage: _imgElement NULL');
+      return;
+    }
+    final token = await _fetchCameraToken();
+    if (token == null) {
+      // ignore: avoid_print
+      print('[CameraWebView] access_token introuvable');
+      if (mounted) setState(() { _loading = false; _error = true; });
       return;
     }
     _loadCount++;
-    final url = _buildUrl();
+    final url = _buildUrl(token);
     // ignore: avoid_print
     print('[CameraWebView] loading url=$url');
     _imgElement!.src = url;
   }
 
   void _startAutoRefresh() {
-    _refreshTimer =
-        Timer.periodic(const Duration(seconds: 5), (_) {
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (mounted) _loadImage();
     });
   }
