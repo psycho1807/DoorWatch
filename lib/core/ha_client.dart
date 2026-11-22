@@ -21,6 +21,7 @@ class HaClient {
 
   final _eventListeners = <String, List<HaEventCallback>>{};
   final _stateListeners = <String, List<HaEventCallback>>{};
+  final _pendingRequests = <int, void Function(dynamic)>{};
 
   // ── Connexion ────────────────────────────────────────────────────────────
 
@@ -77,6 +78,15 @@ class HaClient {
 
       case 'event':
         _dispatchEvent(msg);
+
+      case 'result':
+        final id = msg['id'] as int?;
+        if (id != null && _pendingRequests.containsKey(id)) {
+          final cb = _pendingRequests.remove(id)!;
+          if (msg['success'] == true) {
+            cb(msg['result']);
+          }
+        }
     }
   }
 
@@ -175,20 +185,30 @@ class HaClient {
     }
   }
 
-  /// Liste toutes les entités d'un domaine.
+  /// Liste toutes les entités d'un domaine via WebSocket (pas de CORS).
   Future<List<Map<String, dynamic>>> listStates({String? domain}) async {
+    if (!_authenticated) await connect();
+    // Attendre auth si nécessaire
+    if (!_authenticated) {
+      await Future.delayed(const Duration(seconds: 2));
+    }
     try {
-      final r = await http.get(
-        Uri.parse(Prefs.apiUrl('/states')),
-        headers: _headers,
+      final id = _nextId();
+      final completer = Completer<List<Map<String, dynamic>>>();
+      _pendingRequests[id] = (data) {
+        final result = data as List<dynamic>;
+        final states = result
+            .cast<Map<String, dynamic>>()
+            .where((e) => domain == null ||
+                (e['entity_id'] as String).startsWith('$domain.'))
+            .toList();
+        completer.complete(states);
+      };
+      _send({'id': id, 'type': 'get_states'});
+      return await completer.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => [],
       );
-      if (r.statusCode != 200) return [];
-      final list = jsonDecode(r.body) as List<dynamic>;
-      return list
-          .cast<Map<String, dynamic>>()
-          .where((e) => domain == null ||
-              (e['entity_id'] as String).startsWith('$domain.'))
-          .toList();
     } catch (_) {
       return [];
     }
