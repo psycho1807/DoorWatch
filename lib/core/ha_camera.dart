@@ -1,11 +1,12 @@
 import 'dart:convert';
+import 'dart:developer' as dev;
 import 'dart:typed_data';
 
 import 'ha_client.dart';
 import 'prefs.dart';
 
 /// Accès au flux caméra via Home Assistant.
-/// Sur Flutter web : utilise WebSocket camera/thumbnail (pas de CORS).
+/// Sur Flutter web : utilise WebSocket camera/get_image (pas de CORS).
 /// Sur mobile/desktop : utilise HTTP camera_proxy.
 class HaCamera {
   HaCamera._();
@@ -21,14 +22,25 @@ class HaCamera {
         'entity_id': entityId,
       });
 
-      if (result == null) return null;
+      dev.log('[HaCamera] camera/get_image result keys: ${result?.keys}',
+          name: 'HaCamera');
 
+      if (result == null) {
+        dev.log('[HaCamera] result is null', name: 'HaCamera');
+        return null;
+      }
+
+      // HA retourne {"content": "<base64>", "content_type": "image/jpeg"}
       final content = result['content'] as String?;
-      if (content == null || content.isEmpty) return null;
+      if (content == null || content.isEmpty) {
+        dev.log('[HaCamera] content vide. result=$result', name: 'HaCamera');
+        return null;
+      }
 
-      // Le contenu est en base64
+      dev.log('[HaCamera] content length=${content.length}', name: 'HaCamera');
       return base64Decode(content);
-    } catch (_) {
+    } catch (e, st) {
+      dev.log('[HaCamera] erreur: $e\n$st', name: 'HaCamera');
       return null;
     }
   }

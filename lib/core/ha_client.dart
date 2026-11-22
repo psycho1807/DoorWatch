@@ -216,7 +216,14 @@ class HaClient {
       final id = _nextId();
       final completer = Completer<Map<String, dynamic>?>();
       _pendingRequests[id] = (data) {
-        completer.complete(data as Map<String, dynamic>?);
+        if (data == null) {
+          completer.complete(null);
+        } else if (data is Map<String, dynamic>) {
+          completer.complete(data);
+        } else {
+          // Cas inattendu — on wrappe pour ne pas casser le cast
+          completer.complete({'_raw': data});
+        }
       };
       _send({...msg, 'id': id});
       return await completer.future.timeout(
@@ -226,7 +233,7 @@ class HaClient {
           return null;
         },
       );
-    } catch (_) {
+    } catch (e) {
       return null;
     }
   }
