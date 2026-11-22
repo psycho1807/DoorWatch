@@ -76,10 +76,9 @@ jobs:
   # ── Deploy to Synology → HA (personal, runs only on main) ─────────────────
   deploy-synology:
     name: Deploy to Home Assistant via Synology
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: web
     if: github.ref == 'refs/heads/main'
-    continue-on-error: true
 
     steps:
       - name: Download web artifact
@@ -88,73 +87,40 @@ jobs:
           name: doorwatch-web
           path: build/web
 
-      # 1. Copy the build to the Synology NAS via SSH/rsync
-      #    The NAS must be reachable from the internet (port forwarded or Tailscale).
-      #    Required secrets:
-      #      NAS_HOST      – public IP or hostname of the Synology (e.g. myhome.synology.me)
-      #      NAS_PORT      – SSH port (default 22, or the custom one you configured)
-      #      NAS_USER      – SSH user on the Synology (e.g. admin)
-      #      NAS_SSH_KEY   – private key (paste the entire ~/.ssh/id_rsa content)
-      #      NAS_HA_PATH   – absolute path on the NAS to the HA www folder
-      #                      e.g. /volume1/homeassistant/www/doorwatch
-      - name: Add NAS to known hosts
+      # Runner IS on the NAS — SSH directly to the RPi (no double-hop needed).
+      # Required secrets:
+      #   NAS_HA_PATH – destination path on the RPi, e.g. /config/www/doorwatch
+      #   HA_URL      – Home Assistant URL reachable from NAS, e.g. http://192.168.100.97:8123
+      #   HA_TOKEN    – Long-lived access token from HA profile
+      # The SSH key ~/.ssh/id_ed25519_doorwatch must already exist on the NAS runner.
+      - name: Add RPi to known hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -p ${{ secrets.NAS_PORT }} ${{ secrets.NAS_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan -p 22 192.168.100.97 >> ~/.ssh/known_hosts
 
-      - name: Deploy via NAS → RPi SSH tunnel
-        env:
-          SSH_KEY: ${{ secrets.NAS_SSH_KEY }}
+      - name: Deploy build to RPi
         run: |
-          # Write the SSH key
-          echo "$SSH_KEY" > /tmp/nas_key
-          chmod 600 /tmp/nas_key
-
-          # 1. Copy build to NAS staging area via tar (rsync not available on Synology)
+          ssh -i ~/.ssh/id_ed25519_doorwatch \
+              -o StrictHostKeyChecking=no \
+              root@192.168.100.97 \
+              "mkdir -p ${{ secrets.NAS_HA_PATH }}"
           tar -C build/web -czf - . | \
-            ssh -i /tmp/nas_key -p ${{ secrets.NAS_PORT }} -o StrictHostKeyChecking=no \
-            ${{ secrets.NAS_USER }}@${{ secrets.NAS_HOST }} \
-            "mkdir -p /tmp/doorwatch_deploy && cd /tmp/doorwatch_deploy && tar -xzf -"
+            ssh -i ~/.ssh/id_ed25519_doorwatch \
+                -o StrictHostKeyChecking=no \
+                root@192.168.100.97 \
+                "cd ${{ secrets.NAS_HA_PATH }} && tar -xzf -"
 
-          # 2. From NAS, send to RPi via tar over SSH
-          #    NAS_HA_PATH = path on the RPi, e.g. /config/www/doorwatch
-          ssh \
-            -i /tmp/nas_key \
-            -p ${{ secrets.NAS_PORT }} \
-            -o StrictHostKeyChecking=no \
-            ${{ secrets.NAS_USER }}@${{ secrets.NAS_HOST }} \
-            "ssh -i ~/.ssh/id_ed25519_doorwatch -p 22 -o StrictHostKeyChecking=no \
-              root@192.168.100.97 'mkdir -p ${{ secrets.NAS_HA_PATH }}' \
-            && tar -C /tmp/doorwatch_deploy -czf - . | \
-              ssh -i ~/.ssh/id_ed25519_doorwatch -p 22 -o StrictHostKeyChecking=no \
-              root@192.168.100.97 'cd ${{ secrets.NAS_HA_PATH }} && tar -xzf -' \
-            && rm -rf /tmp/doorwatch_deploy"
-
-      # 3. Tell Home Assistant to reload its frontend resources
-      #    HA_URL   – URL of HA reachable from the NAS, e.g. http://192.168.100.97:8123
-      #    HA_TOKEN – Long-lived access token from HA profile
       - name: Reload HA frontend via API
-        env:
-          SSH_KEY: ${{ secrets.NAS_SSH_KEY }}
         run: |
-          ssh \
-            -i /tmp/nas_key \
-            -p ${{ secrets.NAS_PORT }} \
-            -o StrictHostKeyChecking=no \
-            ${{ secrets.NAS_USER }}@${{ secrets.NAS_HOST }} \
-            "curl -s -o /dev/null -w '%{http_code}' \
-              -X POST '${{ secrets.HA_URL }}/api/services/homeassistant/reload_all' \
-              -H 'Authorization: Bearer ${{ secrets.HA_TOKEN }}' \
-              -H 'Content-Type: application/json' \
-              -d '{}'"
-
-      - name: Cleanup SSH key
-        if: always()
-        run: rm -f /tmp/nas_key
+          curl -s -o /dev/null -w '%{http_code}' \
+            -X POST "${{ secrets.HA_URL }}/api/services/homeassistant/reload_all" \
+            -H "Authorization: Bearer ${{ secrets.HA_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{}'
 
       - name: Notify deployment success
         run: |
-          echo "✅ DoorWatch deployed to ${{ secrets.NAS_HOST }}:${{ secrets.NAS_HA_PATH }} and HA reloaded"
+          echo "✅ DoorWatch deployed to RPi:${{ secrets.NAS_HA_PATH }} and HA reloaded"
 
   # ── Android ───────────────────────────────────────────────────────────────
   android:
