@@ -1,12 +1,15 @@
+// ignore: avoid_web_libraries_in_flutter
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:ui_web' as ui_web;
+import 'dart:html' as html;
 import 'package:flutter/material.dart';
 
-import '../core/ha_camera.dart';
+import '../core/prefs.dart';
 
 /// Widget caméra pour Flutter WEB.
-/// Utilise WebSocket (camera/get_image) → contourne le CORS entièrement.
-/// L'image est rafraîchie toutes les 5 secondes.
+/// Utilise une balise <img> native avec le token dans l'URL (?token=…)
+/// → pas de header Authorization → pas de CORS preflight → ça marche.
+/// L'image est rafraîchie toutes les 5 secondes via un timestamp dans l'URL.
 class CameraWebView extends StatefulWidget {
   final String entityId;
   final bool ringing;
@@ -25,9 +28,11 @@ class CameraWebView extends StatefulWidget {
 
 class _CameraWebViewState extends State<CameraWebView>
     with TickerProviderStateMixin {
-  Uint8List? _imageBytes;
+  late final String _viewId;
+  html.ImageElement? _imgElement;
   bool _loading = true;
   bool _error = false;
+  int _loadCount = 0;
   Timer? _refreshTimer;
 
   late AnimationController _pulseController;
@@ -38,6 +43,7 @@ class _CameraWebViewState extends State<CameraWebView>
   @override
   void initState() {
     super.initState();
+    _viewId = 'ha-cam-${widget.entityId.hashCode}';
 
     _pulseController = AnimationController(
       duration: const Duration(milliseconds: 800),
@@ -55,38 +61,64 @@ class _CameraWebViewState extends State<CameraWebView>
       CurvedAnimation(parent: _borderController, curve: Curves.easeInOut),
     );
 
+    _registerHtmlView();
     _loadImage();
     _startAutoRefresh();
   }
 
-  Future<void> _loadImage() async {
-    try {
-      final bytes = await HaCamera.fetchSnapshot(widget.entityId);
-      if (!mounted) return;
-      if (bytes != null && bytes.isNotEmpty) {
-        setState(() {
-          _imageBytes = bytes;
-          _loading = false;
-          _error = false;
+  /// Construit l'URL snapshot avec le token en query param (pas de CORS).
+  String _buildUrl() {
+    final base = Prefs.haUrl.trimRight();
+    final token = Prefs.haToken;
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    return '$base/api/camera_proxy/${widget.entityId}'
+        '?token=$token&_ts=$ts';
+  }
+
+  void _registerHtmlView() {
+    ui_web.platformViewRegistry.registerViewFactory(
+      _viewId,
+      (int viewId) {
+        final container = html.DivElement()
+          ..style.width = '100%'
+          ..style.height = '100%'
+          ..style.overflow = 'hidden'
+          ..style.backgroundColor = '#0D1117';
+
+        _imgElement = html.ImageElement()
+          ..style.width = '100%'
+          ..style.height = '100%'
+          ..style.objectFit = 'cover'
+          ..style.display = 'none';
+
+        _imgElement!.onLoad.listen((_) {
+          _imgElement!.style.display = 'block';
+          if (mounted) {
+            setState(() { _loading = false; _error = false; });
+            widget.onRefresh?.call();
+          }
         });
-        widget.onRefresh?.call();
-      } else {
-        if (_imageBytes == null) {
-          setState(() {
-            _loading = false;
-            _error = true;
-          });
-        }
-      }
-    } catch (_) {
-      if (!mounted) return;
-      if (_imageBytes == null) {
-        setState(() {
-          _loading = false;
-          _error = true;
+
+        _imgElement!.onError.listen((_) {
+          // ignore: avoid_print
+          print('[CameraWebView] img onError, url=${_imgElement?.src}');
+          if (mounted && _loadCount <= 1) {
+            setState(() { _loading = false; _error = true; });
+          }
         });
-      }
-    }
+
+        container.append(_imgElement!);
+        return container;
+      },
+    );
+  }
+
+  void _loadImage() {
+    _loadCount++;
+    final url = _buildUrl();
+    // ignore: avoid_print
+    print('[CameraWebView] loading url=$url');
+    _imgElement?.src = url;
   }
 
   void _startAutoRefresh() {
@@ -109,13 +141,8 @@ class _CameraWebViewState extends State<CameraWebView>
     return Stack(
       fit: StackFit.expand,
       children: [
-        // ── Image caméra ──────────────────────────────────────────────
-        if (_imageBytes != null)
-          Image.memory(
-            _imageBytes!,
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-          ),
+        // ── Vue HTML native ───────────────────────────────────────────
+        HtmlElementView(viewType: _viewId),
 
         // ── Loading ───────────────────────────────────────────────────
         if (_loading)
@@ -145,7 +172,7 @@ class _CameraWebViewState extends State<CameraWebView>
           ),
 
         // ── Erreur ────────────────────────────────────────────────────
-        if (_error && !_loading && _imageBytes == null)
+        if (_error && !_loading)
           Container(
             color: const Color(0xFF0D1117),
             child: const Center(
