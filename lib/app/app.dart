@@ -38,7 +38,7 @@ class DoorWatchApp extends StatelessWidget {
         onSurface: Colors.white,
       ),
       scaffoldBackgroundColor: background,
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: surface,
         elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),

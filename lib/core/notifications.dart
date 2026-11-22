@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -87,7 +88,7 @@ class NotificationService {
           playSound: Prefs.notifySound,
           enableVibration: Prefs.notifyVibrate,
           icon: '@drawable/ic_doorbell',
-          color: const Color(0xFF1E88E5),
+          color: const ui.Color(0xFF1E88E5),
         ),
         iOS: const DarwinNotificationDetails(
           presentAlert: true,
@@ -115,8 +116,3 @@ class NotificationService {
   }
 }
 
-// Nécessaire pour le compilateur Dart : import de Color sans Material
-class Color {
-  final int value;
-  const Color(this.value);
-}
