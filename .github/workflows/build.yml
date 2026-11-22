@@ -6,12 +6,150 @@ on:
     paths:
       - 'pubspec.yaml'
       - 'lib/**'
+      - 'web/**'
       - 'android/**'
       - 'ios/**'
   pull_request:
     branches: [main]
 
 jobs:
+  # ── Web ───────────────────────────────────────────────────────────────────
+  web:
+    name: Build Web (HA panel)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build web
+        run: |
+          flutter build web --release \
+            --base-href /local/doorwatch/
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep 'version:' pubspec.yaml | head -1 | awk '{print $2}' | cut -d+ -f1)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      # Zip the web build for the GitHub release (all users download this)
+      - name: Create web.zip
+        run: |
+          cd build/web
+          zip -r ../../web.zip .
+
+      - name: Upload web artifact (for deploy job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: doorwatch-web
+          path: build/web/
+          retention-days: 1
+
+      - name: Attach web.zip to GitHub Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: DoorWatch v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: web.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Deploy to Synology → HA (personal, runs only on main) ─────────────────
+  deploy-synology:
+    name: Deploy to Home Assistant via Synology
+    runs-on: ubuntu-latest
+    needs: web
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Download web artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: doorwatch-web
+          path: build/web
+
+      # 1. Copy the build to the Synology NAS via SSH/rsync
+      #    The NAS must be reachable from the internet (port forwarded or Tailscale).
+      #    Required secrets:
+      #      NAS_HOST      – public IP or hostname of the Synology (e.g. myhome.synology.me)
+      #      NAS_PORT      – SSH port (default 22, or the custom one you configured)
+      #      NAS_USER      – SSH user on the Synology (e.g. admin)
+      #      NAS_SSH_KEY   – private key (paste the entire ~/.ssh/id_rsa content)
+      #      NAS_HA_PATH   – absolute path on the NAS to the HA www folder
+      #                      e.g. /volume1/homeassistant/www/doorwatch
+      - name: Add NAS to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p ${{ secrets.NAS_PORT }} ${{ secrets.NAS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy via NAS → RPi SSH tunnel
+        env:
+          SSH_KEY: ${{ secrets.NAS_SSH_KEY }}
+        run: |
+          # Write the SSH key
+          echo "$SSH_KEY" > /tmp/nas_key
+          chmod 600 /tmp/nas_key
+
+          # 1. Copy build to NAS staging area via tar (rsync not available on Synology)
+          tar -C build/web -czf - . | \
+            ssh -i /tmp/nas_key -p ${{ secrets.NAS_PORT }} -o StrictHostKeyChecking=no \
+            ${{ secrets.NAS_USER }}@${{ secrets.NAS_HOST }} \
+            "mkdir -p /tmp/doorwatch_deploy && cd /tmp/doorwatch_deploy && tar -xzf -"
+
+          # 2. From NAS, send to RPi via tar over SSH
+          #    NAS_HA_PATH = path on the RPi, e.g. /config/www/doorwatch
+          ssh \
+            -i /tmp/nas_key \
+            -p ${{ secrets.NAS_PORT }} \
+            -o StrictHostKeyChecking=no \
+            ${{ secrets.NAS_USER }}@${{ secrets.NAS_HOST }} \
+            "ssh -i ~/.ssh/id_ed25519_doorwatch -p 22 -o StrictHostKeyChecking=no \
+              root@192.168.100.97 'mkdir -p ${{ secrets.NAS_HA_PATH }}' \
+            && tar -C /tmp/doorwatch_deploy -czf - . | \
+              ssh -i ~/.ssh/id_ed25519_doorwatch -p 22 -o StrictHostKeyChecking=no \
+              root@192.168.100.97 'cd ${{ secrets.NAS_HA_PATH }} && tar -xzf -' \
+            && rm -rf /tmp/doorwatch_deploy"
+
+      # 3. Tell Home Assistant to reload its frontend resources
+      #    HA_URL   – URL of HA reachable from the NAS, e.g. http://192.168.100.97:8123
+      #    HA_TOKEN – Long-lived access token from HA profile
+      - name: Reload HA frontend via API
+        env:
+          SSH_KEY: ${{ secrets.NAS_SSH_KEY }}
+        run: |
+          ssh \
+            -i /tmp/nas_key \
+            -p ${{ secrets.NAS_PORT }} \
+            -o StrictHostKeyChecking=no \
+            ${{ secrets.NAS_USER }}@${{ secrets.NAS_HOST }} \
+            "curl -s -o /dev/null -w '%{http_code}' \
+              -X POST '${{ secrets.HA_URL }}/api/services/homeassistant/reload_all' \
+              -H 'Authorization: Bearer ${{ secrets.HA_TOKEN }}' \
+              -H 'Content-Type: application/json' \
+              -d '{}'"
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f /tmp/nas_key
+
+      - name: Notify deployment success
+        run: |
+          echo "✅ DoorWatch deployed to ${{ secrets.NAS_HOST }}:${{ secrets.NAS_HA_PATH }} and HA reloaded"
+
   # ── Android ───────────────────────────────────────────────────────────────
   android:
     name: Build Android APK
@@ -69,7 +207,7 @@ jobs:
           VERSION=$(grep 'version:' pubspec.yaml | head -1 | awk '{print $2}' | cut -d+ -f1)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Create GitHub Release
+      - name: Attach APKs to GitHub Release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
