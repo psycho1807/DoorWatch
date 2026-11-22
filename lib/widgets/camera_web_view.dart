@@ -91,8 +91,6 @@ class _CameraWebViewState extends State<CameraWebView>
       }
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[CameraWebView] _fetchCameraToken erreur: $e');
       return null;
     }
   }
@@ -130,8 +128,6 @@ class _CameraWebViewState extends State<CameraWebView>
         });
 
         _imgElement!.onError.listen((_) {
-          // ignore: avoid_print
-          print('[CameraWebView] img onError, url=${_imgElement?.src}');
           if (mounted) {
             setState(() { _loading = false; _error = true; });
           }
@@ -145,23 +141,14 @@ class _CameraWebViewState extends State<CameraWebView>
   }
 
   Future<void> _loadImage() async {
-    if (_imgElement == null) {
-      // ignore: avoid_print
-      print('[CameraWebView] _loadImage: _imgElement NULL');
-      return;
-    }
+    if (_imgElement == null) return;
     final token = await _fetchCameraToken();
     if (token == null) {
-      // ignore: avoid_print
-      print('[CameraWebView] access_token introuvable');
       if (mounted) setState(() { _loading = false; _error = true; });
       return;
     }
     _loadCount++;
-    final url = _buildUrl(token);
-    // ignore: avoid_print
-    print('[CameraWebView] loading url=$url');
-    _imgElement!.src = url;
+    _imgElement!.src = _buildUrl(token);
   }
 
   void _startAutoRefresh() {

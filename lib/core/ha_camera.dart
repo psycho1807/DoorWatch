@@ -21,29 +21,14 @@ class HaCamera {
         'entity_id': entityId,
       });
 
-      // ignore: avoid_print
-      print('[HaCamera] result keys: ${result?.keys}');
-
-      if (result == null) {
-        // ignore: avoid_print
-        print('[HaCamera] result is null');
-        return null;
-      }
+      if (result == null) return null;
 
       // HA retourne {"content": "<base64>", "content_type": "image/jpeg"}
       final content = result['content'] as String?;
-      if (content == null || content.isEmpty) {
-        // ignore: avoid_print
-        print('[HaCamera] content vide. result=$result');
-        return null;
-      }
+      if (content == null || content.isEmpty) return null;
 
-      // ignore: avoid_print
-      print('[HaCamera] OK content length=${content.length}');
       return base64Decode(content);
-    } catch (e, st) {
-      // ignore: avoid_print
-      print('[HaCamera] erreur: $e\n$st');
+    } catch (e) {
       return null;
     }
   }
