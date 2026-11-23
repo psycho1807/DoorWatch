@@ -47,11 +47,12 @@ jobs:
           VERSION=$(grep 'version:' pubspec.yaml | head -1 | awk '{print $2}' | cut -d+ -f1)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # Zip the web build for the GitHub release (all users download this)
-      - name: Create web.zip
+      # Create archives for release and deploy
+      - name: Create web.zip and web.tar.gz
         run: |
           cd build/web
           zip -r ../../web.zip .
+          tar -czf ../../web.tar.gz .
 
       - name: Upload web artifact (for deploy job)
         uses: actions/upload-artifact@v4
@@ -68,7 +69,9 @@ jobs:
           name: DoorWatch v${{ steps.version.outputs.version }}
           draft: false
           prerelease: false
-          files: web.zip
+          files: |
+            web.zip
+            web.tar.gz
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
