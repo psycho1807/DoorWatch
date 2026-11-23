@@ -76,7 +76,7 @@ jobs:
   # ── Deploy to Synology → HA (personal, runs only on main) ─────────────────
   deploy-synology:
     name: Deploy to Home Assistant via Synology
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: web
     if: github.ref == 'refs/heads/main'
 
@@ -87,15 +87,17 @@ jobs:
           name: doorwatch-web
           path: build/web
 
-      # Runner IS on the NAS — SSH directly to the RPi (no double-hop needed).
+      # Deploy via SSH from GitHub-hosted runner to RPi directly.
       # Required secrets:
-      #   NAS_HA_PATH – destination path on the RPi, e.g. /config/www/doorwatch
-      #   HA_URL      – Home Assistant URL reachable from NAS, e.g. http://192.168.100.97:8123
-      #   HA_TOKEN    – Long-lived access token from HA profile
-      # The SSH key ~/.ssh/id_ed25519_doorwatch must already exist on the NAS runner.
-      - name: Add RPi to known hosts
+      #   RPi_SSH_KEY  – private SSH key (ed25519) authorized on the RPi
+      #   NAS_HA_PATH  – destination path on the RPi, e.g. /config/www/doorwatch
+      #   HA_URL       – Home Assistant URL, e.g. http://192.168.100.97:8123
+      #   HA_TOKEN     – Long-lived access token from HA profile
+      - name: Install SSH key
         run: |
           mkdir -p ~/.ssh
+          echo "${{ secrets.RPi_SSH_KEY }}" > ~/.ssh/id_ed25519_doorwatch
+          chmod 600 ~/.ssh/id_ed25519_doorwatch
           ssh-keyscan -p 22 192.168.100.97 >> ~/.ssh/known_hosts
 
       - name: Deploy build to RPi
