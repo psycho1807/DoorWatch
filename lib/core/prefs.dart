@@ -50,7 +50,7 @@ class Prefs {
   static String get proLicense => _p.getString(_keyProLicense) ?? '';
   static set proLicense(String v) => _p.setString(_keyProLicense, v);
 
-  static bool get isPro => proLicense.isNotEmpty;
+  static bool get isPro => true; // TODO: vérifier via Gumroad API
 
   // ── Notifications ────────────────────────────────────────────────────────
 
