@@ -27,6 +27,16 @@
   </style>
 </head>
 <body>
+  <!-- TensorFlow.js CPU backend — forcé avant face-api.js pour éviter WebGL -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.22.0/dist/tf-core.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-cpu@4.22.0/dist/tf-backend-cpu.min.js" crossorigin="anonymous"></script>
+  <script>
+    // Forcer le backend CPU avant le chargement de face-api.js
+    if (typeof tf !== 'undefined') {
+      tf.setBackend('cpu');
+    }
+  </script>
+
   <!-- face-api.js : modèles de reconnaissance faciale (Pro) -->
   <!-- Chargé en mode async — disponible quand FaceRecognizer.init() est appelé -->
   <script
